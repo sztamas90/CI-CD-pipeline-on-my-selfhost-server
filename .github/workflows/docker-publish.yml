@@ -96,22 +96,10 @@ jobs:
         # against the sigstore community Fulcio instance.
         run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
   deploy:
-    needs: build           # Waits for build job to finish
+    needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Copy docker-compose.yml to server
-        uses: appleboy/scp-action@v0.1.4
-        with:
-          host: ${{ secrets.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          source: "docker-compose.yml"
-          target: "/srv/myapp/docker-compose.yml"
-
-      - name: Deploy via SSH
+      - name: Deploy to Linux server (no docker-compose)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SERVER_IP }}
@@ -119,8 +107,24 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             set -e
-            docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
-            mkdir -p /srv/myapp
-            cd /srv/myapp
-            docker compose pull
-            docker compose up -d
+            IMAGE="ghcr.io/${{ github.repository }}:latest"
+
+            echo "Logging into GHCR..."
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            echo "Stopping old container (if exists)..."
+            if [ "$(docker ps -aq -f name=my-service)" ]; then
+              docker rm -f my-service || true
+            fi
+
+            echo "Pulling latest image..."
+            docker pull "$IMAGE"
+
+            echo "Starting new container..."
+            docker run -d \
+              --name my-service \
+              -p 8080:8080 \
+              --restart unless-stopped \
+              "$IMAGE"
+
+            echo "Deployment complete!"
